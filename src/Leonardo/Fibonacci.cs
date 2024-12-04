@@ -1,8 +1,10 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 
 namespace Leonardo;
 
-public record FibonacciResult(int Input, int Result);
+public record FibonacciResult(int Input, long Result);
+
 
 public static class Fibonacci
 {
@@ -20,12 +22,9 @@ public static class Fibonacci
         var tasks = new List<Task<FibonacciResult>>();
         foreach (var input in strings)
         {
-            
             var int32 = Convert.ToInt32(input);
-            
-            var t_fibo = await context.TFibonaccis.Where(t => t.FibId == int32).FirstOrDefaultAsync();
-
-            if (t_fibo != null)
+            var t_fibo =  await context.TFibonaccis.Where(t => t.FibInput == int32).FirstOrDefaultAsync();
+            if(t_fibo != null)
             {
                 var t = Task.Run(() =>
                 {
@@ -35,7 +34,6 @@ public static class Fibonacci
             }
             else
             {
-
                 var r = Task.Run(() =>
                 {
                     var result = Fibonacci.Run(int32);
@@ -49,16 +47,17 @@ public static class Fibonacci
         foreach (var task in tasks)
         {
             var r = await task;
+            
             context.TFibonaccis.Add(new TFibonacci
-                {
-                    FibInput = r.Input,
-                    FibOutput = r.Result
-                }
-            );
+            {
+                FibInput = r.Input,
+                FibOutput = r.Result
+            });
+            
             results.Add(r);
         }
+
         await context.SaveChangesAsync();
         return results;
     }
 }
-
