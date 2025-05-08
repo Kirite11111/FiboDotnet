@@ -1,0 +1,112 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_REGISTRY = "ghcr.io"
+        DOCKER_REPOSITORY = "kirite11111"
+        IMAGE_NAME = "fibonacci"
+        DOTNET_VERSION = "8.0.x"
+        PACKAGE_NAME = "Kirite.Fibonacci"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Setup .NET') {
+            steps {
+                sh 'dotnet --version || true'
+                // Installe .NET via SDK manager (si nécessaire) ou image docker dotnet
+            }
+        }
+
+        stage('Generate Version Tag') {
+            steps {
+                script {
+                    if (env.BRANCH_NAME == 'main') {
+                        def version = "v1.0.${BUILD_NUMBER}"
+                        env.NEW_VERSION = version
+                        sh "git config user.email 'jenkins@example.com'"
+                        sh "git config user.name 'jenkins'"
+                        sh "git tag ${version}"
+                        sh "git push origin ${version}"
+                    } else {
+                        env.NEW_VERSION = "pr-${env.CHANGE_ID}-${env.BUILD_NUMBER}"
+                    }
+                }
+            }
+        }
+
+        stage('Build & Publish NuGet') {
+            when {
+                branch 'main'
+            }
+            steps {
+                dir('src/Leonardo') {
+                    sh '''
+                        dotnet pack -c Release -p:PackageVersion=$NEW_VERSION
+                        dotnet nuget push ./bin/Release/${PACKAGE_NAME}.$NEW_VERSION.nupkg --api-key $NUGET_API_KEY --source https://api.nuget.org/v3/index.json
+                    '''
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir('tests/Leonardo.Tests') {
+                    sh '''
+                        dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=opencover /p:CoverletOutput=./coverage/opencover.xml
+                    '''
+                }
+            }
+        }
+
+        stage('Publish App Artifact') {
+            steps {
+                sh '''
+                    dotnet publish ./src/Leonardo.Web/Leonardo.Web.csproj --self-contained true --output ./win-x64/fibonacci -c Release -r win-x64 /p:PublishSingleFile=true
+                '''
+                archiveArtifacts artifacts: 'win-x64/fibonacci/**', fingerprint: true
+            }
+        }
+
+        stage('Docker Build & Push') {
+            steps {
+                script {
+                    docker.withRegistry("https://${DOCKER_REGISTRY}", 'docker-ghcr-creds') {
+                        sh """
+                            docker build -t ${DOCKER_REGISTRY}/${DOCKER_REPOSITORY}/${IMAGE_NAME}:${NEW_VERSION} .
+                            docker push ${DOCKER_REGISTRY}/${DOCKER_REPOSITORY}/${IMAGE_NAME}:${NEW_VERSION}
+                        """
+                    }
+                }
+            }
+        }
+
+        // Optionnel
+//         stage('Azure Deployment') {
+//             when {
+//                 branch 'main'
+//             }
+//             steps {
+//                 withCredentials([string(credentialsId: 'azure-credentials', variable: 'AZURE_CREDS')]) {
+//                     sh '''
+//                         az login --service-principal --username $AZURE_CLIENT_ID --password $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+//                         az group create --name FibonacciGithub --location northeurope
+//                         az container create -g FibonacciGithub --name fibo --dns-name-label fibo2-kirite --image ${DOCKER_REGISTRY}/${DOCKER_REPOSITORY}/${IMAGE_NAME}:${NEW_VERSION} --environment-variables "ASPNETCORE_URLS=http://*:8080" --ports 8080 --os-type Linux --cpu 1 --memory 1
+//                     '''
+//                 }
+//             }
+//         }
+    }
+
+    post {
+        always {
+            echo "Pipeline terminé avec version: ${env.NEW_VERSION}"
+        }
+    }
+}
